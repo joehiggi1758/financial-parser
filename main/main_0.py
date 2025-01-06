@@ -32,27 +32,18 @@ for sheet_name in wb.sheetnames:
     data = list(sheet.values)
 
     # ----------------------------------------------------------------------
-    # Debug: Print the first few rows to confirm layout (optional):
+    # 1) Skip the first 8 rows (rows 0–7).
+    #    => Row 8 in Excel becomes the "header row".
     # ----------------------------------------------------------------------
-    # print(f"\n=== DEBUG: Sheet '{sheet_name}' first 12 rows ===")
-    # for i, row_vals in enumerate(data[:12]):
-    #     print(f"Row {i}: {row_vals}")
-
-    # ----------------------------------------------------------------------
-    # 1) Handle top-left metadata. 
-    #    You have 8 lines (rows 0..7), plus row 8 is blank,
-    #    so row 9 in Excel is your header => skip_count = 9
-    # ----------------------------------------------------------------------
-    skip_count = 8  # 8 metadata rows + 1 blank row
+    skip_count = 8
     if len(data) <= skip_count:
         print(f"Skipping {sheet_name}; not enough rows to reach a header.")
         continue
 
-    # Collect your eight lines of metadata:
+    # Collect your eight lines of metadata (optional):
     metadata = {
         "Sheet Name": sheet_name,
         "Workbook Name": file_path.split('/')[-1],
-        # Feel free to rename these as you like:
         "Meta 1": data[0][0],  # row 0
         "Meta 2": data[1][0],  # row 1
         "Meta 3": data[2][0],  # row 2
@@ -62,12 +53,11 @@ for sheet_name in wb.sheetnames:
         "Meta 7": data[6][0],  # row 6
         "Meta 8": data[7][0],  # row 7
     }
-    # Row 8 is presumably blank, so we skip it as well.
 
     # ----------------------------------------------------------------------
-    # 2) Build a DataFrame from rows after skip_count (row 9 = header)
+    # 2) Build a DataFrame from rows after skip_count (row 8 = header)
     # ----------------------------------------------------------------------
-    df_data = data[skip_count:]  # e.g., row 9 => df_data[0]
+    df_data = data[skip_count:]  # row 8 => df_data[0]
     if not df_data:
         continue
 
@@ -75,9 +65,9 @@ for sheet_name in wb.sheetnames:
     if tmp_df.empty:
         continue
 
-    # The first row in tmp_df => column headers
+    # The first row in tmp_df => column headers (Excel row 8)
     tmp_df.columns = tmp_df.iloc[0]
-    tmp_df = tmp_df.iloc[1:].copy()
+    tmp_df = tmp_df.iloc[1:].copy()  # Actual data starts at Excel row 9+
 
     # Convert columns to strings, fill "Unnamed Column" if needed
     tmp_df.columns = [
@@ -91,11 +81,6 @@ for sheet_name in wb.sheetnames:
     # 3) Detect bold rows for sub-header logic (bottom-up approach)
     # ----------------------------------------------------------------------
     bold_indices = detect_bold_rows(sheet)
-    # Because row 9 in Excel is your header, row 10 in Excel => tmp_df row 0,
-    # so the Excel row for tmp_df row i = i + skip_count + 1
-    # (the +1 is because row skip_count is the header, not data).
-    # Example: i=0 => Excel row = 0 + 9 + 1 = 10
-
     row_data = []
     col_a_name = tmp_df.columns[0]
     other_cols = tmp_df.columns[1:]
@@ -123,8 +108,6 @@ for sheet_name in wb.sheetnames:
 
     # ----------------------------------------------------------------------
     # 4) Bottom-Up Pass to assign sub-headers
-    #    - If row is bold, set current_subheader = that row’s text
-    #    - Non-bold row uses current_subheader
     # ----------------------------------------------------------------------
     current_subheader = None
     for i in range(len(row_data) - 1, -1, -1):
@@ -169,15 +152,18 @@ for sheet_name in wb.sheetnames:
 
     # ----------------------------------------------------------------------
     # 7) Parse something like "Q1 FY20" or "Q3 FY2024"
-    #    - Quarter = Q1, Q2, etc.
-    #    - Year = FY20 or FY2024
     # ----------------------------------------------------------------------
-    # This regex: ^(Q\d)\s*(FY\d{2,4})$
-    # => Q1, Q2, Q3, Q4 + optional spaces + FY + 2 or 4 digits
-    # Example matches: Q1 FY23, Q4FY2024, Q2  FY2025
+    # Add debug print to check melted content
+    # print("DEBUG: Melted DataFrame before Quarter/Year parsing:\n", melted.head())
+
+    # Ensure Quarter/Year parsing works for all rows
     quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*(FY\d{2,4})$')
     melted["Quarter"] = quarter_year[0]
     melted["Year"] = quarter_year[1]
+
+    # Check and fill missing Quarter/Year values
+    melted["Quarter"] = melted["Quarter"].fillna(method='ffill')  # Forward-fill missing Quarters
+    melted["Year"] = melted["Year"].fillna(method='ffill')  # Forward-fill missing Years
 
     melted.drop(columns=["Quarter/Year"], inplace=True)
 
@@ -198,7 +184,7 @@ for sheet_name in wb.sheetnames:
     melted.dropna(subset=["Financial Amount"], how="any", inplace=True)
 
     # ----------------------------------------------------------------------
-    # 11) Reorder columns (Adjust as needed)
+    # 11) Reorder columns
     # ----------------------------------------------------------------------
     final_order = [
         "Financial Metric",
@@ -208,14 +194,14 @@ for sheet_name in wb.sheetnames:
         "Year",
         "Sheet Name",
         "Workbook Name",
-        "Meta 1",  # e.g. "Last Refresh..."
-        "Meta 2",  # e.g. "[PROD] FP&A Model"
-        "Meta 3",  # e.g. "IS05 MGAAP IS by LE & LOB"
-        "Meta 4",  # e.g. "Versions - Current Forecast"
-        "Meta 5",  # e.g. "Line Items - Amount"
-        "Meta 6",  # e.g. "Scenarios - Base"
-        "Meta 7",  # e.g. "L5 LOB: MGAAP - VA"
-        "Meta 8",  # e.g. "E5 LE: Joe Higg"
+        "Meta 1",
+        "Meta 2",
+        "Meta 3",
+        "Meta 4",
+        "Meta 5",
+        "Meta 6",
+        "Meta 7",
+        "Meta 8",
     ]
     existing_cols = [c for c in final_order if c in melted.columns]
     extra_cols = [c for c in melted.columns if c not in existing_cols]
