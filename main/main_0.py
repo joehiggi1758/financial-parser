@@ -23,9 +23,8 @@ wb = load_workbook(file_path, data_only=True)
 all_data = []
 
 for sheet_name in wb.sheetnames:
-    # If you only want sheets with "IS0" in the name, uncomment:
+    # Uncomment the next two lines if you want to process only sheets containing "IS0"
     # if "IS0" not in sheet_name:
-    #     print(f"Skipping sheet '{sheet_name}' (does not contain 'IS0').")
     #     continue
 
     sheet = wb[sheet_name]
@@ -59,22 +58,29 @@ for sheet_name in wb.sheetnames:
     # ----------------------------------------------------------------------
     df_data = data[skip_count:]  # row 8 => df_data[0]
     if not df_data:
+        print(f"Skipping {sheet_name}; no data after skip_count.")
         continue
 
     tmp_df = pd.DataFrame(df_data)
     if tmp_df.empty:
+        print(f"Skipping {sheet_name}; tmp_df is empty after reading data.")
         continue
 
     # The first row in tmp_df => column headers (Excel row 8)
-    tmp_df.columns = tmp_df.iloc[0]
+    header_row = tmp_df.iloc[0]
+    if header_row.isnull().all():
+        print(f"Skipping {sheet_name}; header row is empty.")
+        continue
+
+    # Ensure all column names are strings and strip whitespace
+    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" for col in header_row]
     tmp_df = tmp_df.iloc[1:].copy()  # Actual data starts at Excel row 9+
 
-    # Convert columns to strings, fill "Unnamed Column" if needed
-    tmp_df.columns = [
-        str(col) if pd.notnull(col) else "Unnamed Column"
-        for col in tmp_df.columns
-    ]
+    # Drop columns where all values are NaN
+    tmp_df.dropna(axis=1, how='all', inplace=True)
+
     if tmp_df.empty:
+        print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
         continue
 
     # ----------------------------------------------------------------------
@@ -84,6 +90,10 @@ for sheet_name in wb.sheetnames:
     row_data = []
     col_a_name = tmp_df.columns[0]
     other_cols = tmp_df.columns[1:]
+
+    # Ensure col_a_name is not empty
+    if pd.isnull(col_a_name) or col_a_name.strip() == "":
+        col_a_name = "Financial Metric"
 
     for i, row_series in tmp_df.iterrows():
         excel_row = i + skip_count + 1
@@ -104,6 +114,7 @@ for sheet_name in wb.sheetnames:
         row_data.append(row_dict)
 
     if not row_data:
+        print(f"Skipping {sheet_name}; no data in row_data after processing.")
         continue
 
     # ----------------------------------------------------------------------
@@ -113,12 +124,17 @@ for sheet_name in wb.sheetnames:
     for i in range(len(row_data) - 1, -1, -1):
         if row_data[i]["is_bold"]:
             current_subheader = row_data[i]["colA_value"]
+            # Also, assign subheader to the bold row if needed
+            row_data[i]["sub_header"] = current_subheader
         else:
             row_data[i]["sub_header"] = current_subheader
 
-    # Remove the bold rows themselves (if you do NOT want them in the final data)
-    row_data = [r for r in row_data if not r["is_bold"]]
+    # Optionally, include bold rows in the final data
+    # If you don't want them, uncomment the next line
+    # row_data = [r for r in row_data if not r["is_bold"]]
+
     if not row_data:
+        print(f"Skipping {sheet_name}; no data after removing bold rows.")
         continue
 
     # ----------------------------------------------------------------------
@@ -135,6 +151,7 @@ for sheet_name in wb.sheetnames:
 
     cleaned_df = pd.DataFrame(cleaned_rows)
     if cleaned_df.empty:
+        print(f"Skipping {sheet_name}; cleaned_df is empty.")
         continue
 
     # ----------------------------------------------------------------------
@@ -142,6 +159,11 @@ for sheet_name in wb.sheetnames:
     # ----------------------------------------------------------------------
     id_vars = ["Sub-Header", "Financial Metric"]
     value_vars = [c for c in cleaned_df.columns if c not in id_vars]
+
+    # Check if value_vars are available
+    if not value_vars:
+        print(f"Skipping {sheet_name}; no value columns to melt.")
+        continue
 
     melted = cleaned_df.melt(
         id_vars=id_vars,
@@ -153,24 +175,26 @@ for sheet_name in wb.sheetnames:
     # ----------------------------------------------------------------------
     # 7) Parse something like "Q1 FY20" or "Q3 FY2024"
     # ----------------------------------------------------------------------
-    # Add debug print to check melted content
+    # Debug print to check melted content
     # print("DEBUG: Melted DataFrame before Quarter/Year parsing:\n", melted.head())
 
-    # Ensure Quarter/Year parsing works for all rows
-    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*(FY\d{2,4})$')
+    # Adjust regex to handle variations like "Q1-FY20", "Q1FY20", "Q1 FY 20"
+    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
     melted["Quarter"] = quarter_year[0]
     melted["Year"] = quarter_year[1]
 
-    # Check and fill missing Quarter/Year values
-    melted["Quarter"] = melted["Quarter"].fillna(method='ffill')  # Forward-fill missing Quarters
-    melted["Year"] = melted["Year"].fillna(method='ffill')  # Forward-fill missing Years
+    # Fill missing Quarter/Year values if necessary
+    melted["Quarter"] = melted["Quarter"].fillna(method='ffill')
+    melted["Year"] = melted["Year"].fillna(method='ffill')
 
-    melted.drop(columns=["Quarter/Year"], inplace=True)
+    # Drop rows where Quarter or Year couldn't be parsed
+    melted.dropna(subset=["Quarter", "Year"], how="any", inplace=True)
 
     # ----------------------------------------------------------------------
-    # 8) Replace empty or whitespace with NA
+    # 8) Replace empty or whitespace with NA and strip strings
     # ----------------------------------------------------------------------
     melted.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
+    melted = melted.applymap(lambda x: x.strip() if isinstance(x, str) else x)
 
     # ----------------------------------------------------------------------
     # 9) Attach metadata
@@ -181,7 +205,10 @@ for sheet_name in wb.sheetnames:
     # ----------------------------------------------------------------------
     # 10) Only keep rows where Financial Amount is non-null
     # ----------------------------------------------------------------------
+    num_rows_before = len(melted)
     melted.dropna(subset=["Financial Amount"], how="any", inplace=True)
+    num_rows_after = len(melted)
+    print(f"Dropped {num_rows_before - num_rows_after} rows with null Financial Amount in sheet '{sheet_name}'.")
 
     # ----------------------------------------------------------------------
     # 11) Reorder columns
