@@ -1,0 +1,13 @@
+Financial Metric,Financial Amount,Sub-Header,Quarter,Year,Sheet Name,Workbook Name,Model Category,Model Name,Version Name,Forecast Version
+Premium 1,100.0,Premiums,Q1,FY22,IS05 MGAAP IS VA,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 1,240.0,Fee Income,Q1,FY22,IS05 MGAAP IS VA,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 2,100.0,Fee Income,Q1,FY22,IS05 MGAAP IS VA,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Premium 1,100.0,Premiums,Q2,FY22,IS05 MGAAP IS VA,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 1,300.0,Fee Income,Q2,FY22,IS05 MGAAP IS VA,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 2,100.0,Fee Income,Q2,FY22,IS05 MGAAP IS VA,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Premium 1,100.0,Premiums,Q1,FY22,IS05 MGAAP IS Corp,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 1,240.0,Fee Income,Q1,FY22,IS05 MGAAP IS Corp,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 2,100.0,Fee Income,Q1,FY22,IS05 MGAAP IS Corp,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Premium 1,100.0,Premiums,Q2,FY22,IS05 MGAAP IS Corp,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 1,300.0,Fee Income,Q2,FY22,IS05 MGAAP IS Corp,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
+Test 2,100.0,Fee Income,Q2,FY22,IS05 MGAAP IS Corp,test_0.xlsx,Last Refresh: 6/12/2024 5:56:35 PM,[PROD] FP&A Model,IS05 MGAAP IS by LE & LOB,Versions - Current Forecast
