@@ -5,7 +5,7 @@ from openpyxl.styles import Font
 def detect_bold_rows(sheet):
     """
     Return a set of bold row indices (1-based) in column A.
-    Example: {6, 8, 12} if those rows are bold.
+    Example: {10, 12, 56} if those rows are bold.
     """
     bold_indices = set()
     for row in sheet.iter_rows(min_col=1, max_col=1):
@@ -13,7 +13,6 @@ def detect_bold_rows(sheet):
         if cell.font and cell.font.bold:
             bold_indices.add(cell.row)
     return bold_indices
-
 
 # --------------------------------------------------------------------------
 # Main Script
@@ -24,65 +23,63 @@ wb = load_workbook(file_path, data_only=True)
 all_data = []
 
 for sheet_name in wb.sheetnames:
-    # Only parse if "IS0" in the sheet name (per prior requirement).
-    if "IS0" not in sheet_name:
-        print(f"Skipping sheet '{sheet_name}' (does not contain 'IS0').")
-        continue
+    # If you only want sheets with "IS0" in the name, uncomment:
+    # if "IS0" not in sheet_name:
+    #     print(f"Skipping sheet '{sheet_name}' (does not contain 'IS0').")
+    #     continue
 
     sheet = wb[sheet_name]
     data = list(sheet.values)
 
-    print(f"\n=== DEBUG: Parsing Sheet '{sheet_name}' first 12 rows ===")
-    for i, row_vals in enumerate(data[:12]):
-        print(f"Row {i}: {row_vals}")
+    # ----------------------------------------------------------------------
+    # Debug: Print the first few rows to confirm layout (optional):
+    # ----------------------------------------------------------------------
+    # print(f"\n=== DEBUG: Sheet '{sheet_name}' first 12 rows ===")
+    # for i, row_vals in enumerate(data[:12]):
+    #     print(f"Row {i}: {row_vals}")
 
     # ----------------------------------------------------------------------
-    # 1) Store the top 8 lines as metadata
-    #
-    # Adjust these names however you like. If you don't know the exact contents
-    # of each row, you can name them generically (e.g. metadata1, metadata2, etc.).
+    # 1) Handle top-left metadata. 
+    #    You have 8 lines (rows 0..7), plus row 8 is blank,
+    #    so row 9 in Excel is your header => skip_count = 9
     # ----------------------------------------------------------------------
+    skip_count = 8  # 8 metadata rows + 1 blank row
+    if len(data) <= skip_count:
+        print(f"Skipping {sheet_name}; not enough rows to reach a header.")
+        continue
+
+    # Collect your eight lines of metadata:
     metadata = {
         "Sheet Name": sheet_name,
-        "Workbook Name": file_path.split('/')[-1]
+        "Workbook Name": file_path.split('/')[-1],
+        # Feel free to rename these as you like:
+        "Meta 1": data[0][0],  # row 0
+        "Meta 2": data[1][0],  # row 1
+        "Meta 3": data[2][0],  # row 2
+        "Meta 4": data[3][0],  # row 3
+        "Meta 5": data[4][0],  # row 4
+        "Meta 6": data[5][0],  # row 5
+        "Meta 7": data[6][0],  # row 6
+        "Meta 8": data[7][0],  # row 7
     }
-
-    # Safely extract up to 8 rows, in case the sheet might have fewer.
-    # If you *know* the sheet is always long enough, you can skip the checks.
-    if len(data) >= 1: metadata["Last Refresh"]          = data[0][0]
-    if len(data) >= 2: metadata["Prod Model"]            = data[1][0]
-    if len(data) >= 3: metadata["IS0 Info"]              = data[2][0]
-    if len(data) >= 4: metadata["Versions"]              = data[3][0]
-    if len(data) >= 5: metadata["Line Items"]            = data[4][0]
-    if len(data) >= 6: metadata["Scenarios"]             = data[5][0]
-    if len(data) >= 7: metadata["L5 LOB"]                = data[6][0]
-    if len(data) >= 8: metadata["E5 LE"]                 = data[7][0]
+    # Row 8 is presumably blank, so we skip it as well.
 
     # ----------------------------------------------------------------------
-    # 2) Skip first 8 lines of metadata + possibly 1 blank row (total 9).
-    #    So row 9 in Excel => df_data[0].
-    #
-    #    If your actual header is at row 8 (with no blank row),
-    #    then set skip_count = 8 instead of 9.
+    # 2) Build a DataFrame from rows after skip_count (row 9 = header)
     # ----------------------------------------------------------------------
-    skip_count = 9  # 8 metadata lines + 1 blank
-    df_data = data[skip_count:]
+    df_data = data[skip_count:]  # e.g., row 9 => df_data[0]
     if not df_data:
-        print(f"Skipping {sheet_name} - empty after skipping metadata.")
         continue
 
     tmp_df = pd.DataFrame(df_data)
     if tmp_df.empty:
-        print(f"Skipping {sheet_name} - no data after metadata.")
         continue
 
-    # ----------------------------------------------------------------------
-    # 3) The first row of tmp_df is the column headers
-    # ----------------------------------------------------------------------
+    # The first row in tmp_df => column headers
     tmp_df.columns = tmp_df.iloc[0]
     tmp_df = tmp_df.iloc[1:].copy()
 
-    # Clean up columns
+    # Convert columns to strings, fill "Unnamed Column" if needed
     tmp_df.columns = [
         str(col) if pd.notnull(col) else "Unnamed Column"
         for col in tmp_df.columns
@@ -91,20 +88,19 @@ for sheet_name in wb.sheetnames:
         continue
 
     # ----------------------------------------------------------------------
-    # 4) Detect bold rows for sub-header logic (bottom-up approach)
+    # 3) Detect bold rows for sub-header logic (bottom-up approach)
     # ----------------------------------------------------------------------
     bold_indices = detect_bold_rows(sheet)
-    # After skipping 9 lines, row (skip_count) + 1 => Excel row index for tmp_df row 0
-    # So if skip_count=9 => row 9 in Excel => df_data[0]
-    # => excel_row = i + skip_count + 1 = i + 10
-    # (But we have to check how your data lines up)
+    # Because row 9 in Excel is your header, row 10 in Excel => tmp_df row 0,
+    # so the Excel row for tmp_df row i = i + skip_count + 1
+    # (the +1 is because row skip_count is the header, not data).
+    # Example: i=0 => Excel row = 0 + 9 + 1 = 10
 
     row_data = []
-    col_a_name = tmp_df.columns[0]  # The first column in the DataFrame
+    col_a_name = tmp_df.columns[0]
     other_cols = tmp_df.columns[1:]
 
     for i, row_series in tmp_df.iterrows():
-        # This row in Excel is i + skip_count + 1
         excel_row = i + skip_count + 1
         is_bold = (excel_row in bold_indices)
 
@@ -122,9 +118,13 @@ for sheet_name in wb.sheetnames:
         }
         row_data.append(row_dict)
 
+    if not row_data:
+        continue
+
     # ----------------------------------------------------------------------
-    # 5) Bottom-up pass to assign sub-headers
-    #    If row is bold, it becomes the sub-header for the rows ABOVE it
+    # 4) Bottom-Up Pass to assign sub-headers
+    #    - If row is bold, set current_subheader = that row’s text
+    #    - Non-bold row uses current_subheader
     # ----------------------------------------------------------------------
     current_subheader = None
     for i in range(len(row_data) - 1, -1, -1):
@@ -133,14 +133,13 @@ for sheet_name in wb.sheetnames:
         else:
             row_data[i]["sub_header"] = current_subheader
 
-    # Remove bold rows themselves (sub-headers only):
+    # Remove the bold rows themselves (if you do NOT want them in the final data)
     row_data = [r for r in row_data if not r["is_bold"]]
-
     if not row_data:
         continue
 
     # ----------------------------------------------------------------------
-    # 6) Build the cleaned DataFrame from row_data
+    # 5) Build a "cleaned" DataFrame from row_data
     # ----------------------------------------------------------------------
     cleaned_rows = []
     for r in row_data:
@@ -156,7 +155,7 @@ for sheet_name in wb.sheetnames:
         continue
 
     # ----------------------------------------------------------------------
-    # 7) Melt wide columns (e.g. Q1 FY20) to long
+    # 6) Melt wide columns (e.g., Q1 FY20, Q2 FY2024) => long format
     # ----------------------------------------------------------------------
     id_vars = ["Sub-Header", "Financial Metric"]
     value_vars = [c for c in cleaned_df.columns if c not in id_vars]
@@ -168,25 +167,38 @@ for sheet_name in wb.sheetnames:
         value_name="Financial Amount"
     )
 
-    # Split something like "Q1 FY20" into Quarter = Q1, Year = FY20
-    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*(FY\d{2})$')
+    # ----------------------------------------------------------------------
+    # 7) Parse something like "Q1 FY20" or "Q3 FY2024"
+    #    - Quarter = Q1, Q2, etc.
+    #    - Year = FY20 or FY2024
+    # ----------------------------------------------------------------------
+    # This regex: ^(Q\d)\s*(FY\d{2,4})$
+    # => Q1, Q2, Q3, Q4 + optional spaces + FY + 2 or 4 digits
+    # Example matches: Q1 FY23, Q4FY2024, Q2  FY2025
+    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*(FY\d{2,4})$')
     melted["Quarter"] = quarter_year[0]
     melted["Year"] = quarter_year[1]
+
     melted.drop(columns=["Quarter/Year"], inplace=True)
 
-    # Replace empty or whitespace with NA
+    # ----------------------------------------------------------------------
+    # 8) Replace empty or whitespace with NA
+    # ----------------------------------------------------------------------
     melted.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
 
     # ----------------------------------------------------------------------
-    # 8) Attach metadata & filter rows with null amounts
+    # 9) Attach metadata
     # ----------------------------------------------------------------------
     for k, v in metadata.items():
         melted[k] = v
 
+    # ----------------------------------------------------------------------
+    # 10) Only keep rows where Financial Amount is non-null
+    # ----------------------------------------------------------------------
     melted.dropna(subset=["Financial Amount"], how="any", inplace=True)
 
     # ----------------------------------------------------------------------
-    # 9) Reorder columns
+    # 11) Reorder columns (Adjust as needed)
     # ----------------------------------------------------------------------
     final_order = [
         "Financial Metric",
@@ -194,17 +206,16 @@ for sheet_name in wb.sheetnames:
         "Sub-Header",
         "Quarter",
         "Year",
-        # Then your metadata columns below, rename or reorder as needed
         "Sheet Name",
         "Workbook Name",
-        "Last Refresh",
-        "Prod Model",
-        "IS0 Info",
-        "Versions",
-        "Line Items",
-        "Scenarios",
-        "L5 LOB",
-        "E5 LE"
+        "Meta 1",  # e.g. "Last Refresh..."
+        "Meta 2",  # e.g. "[PROD] FP&A Model"
+        "Meta 3",  # e.g. "IS05 MGAAP IS by LE & LOB"
+        "Meta 4",  # e.g. "Versions - Current Forecast"
+        "Meta 5",  # e.g. "Line Items - Amount"
+        "Meta 6",  # e.g. "Scenarios - Base"
+        "Meta 7",  # e.g. "L5 LOB: MGAAP - VA"
+        "Meta 8",  # e.g. "E5 LE: Joe Higg"
     ]
     existing_cols = [c for c in final_order if c in melted.columns]
     extra_cols = [c for c in melted.columns if c not in existing_cols]
@@ -212,10 +223,13 @@ for sheet_name in wb.sheetnames:
 
     melted = melted.loc[:, final_cols]
 
+    # ----------------------------------------------------------------------
+    # 12) Append to all_data
+    # ----------------------------------------------------------------------
     all_data.append(melted)
 
 # --------------------------------------------------------------------------
-# Combine all sheets (that contain "IS0" in name) and save
+# Combine all sheets and save
 # --------------------------------------------------------------------------
 if all_data:
     combined_df = pd.concat(all_data, ignore_index=True)
