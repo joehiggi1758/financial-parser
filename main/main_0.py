@@ -43,7 +43,7 @@ def process_sheet(sheet, sheet_name, file_path):
         print(f"Skipping {sheet_name}; no data after skip_count.")
         return None
 
-    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" for col in tmp_df.iloc[0]]
+    tmp_df.columns = [str(col).strip().lower() if pd.notnull(col) else "unnamed_column" for col in tmp_df.iloc[0]]
     tmp_df = tmp_df.iloc[1:].dropna(axis=1, how='all').copy()
     if tmp_df.empty:
         print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
@@ -70,7 +70,7 @@ def process_sheet(sheet, sheet_name, file_path):
 def build_row_data(tmp_df, bold_indices, skip_count):
     """Build a list of row data dictionaries for processing."""
     row_data = []
-    col_a_name = tmp_df.columns[0] if tmp_df.columns[0] else "Financial Metric"
+    col_a_name = tmp_df.columns[0] if tmp_df.columns[0] else "financial_metric"
     other_cols = tmp_df.columns[1:]
 
     for i, row_series in tmp_df.iterrows():
@@ -106,13 +106,13 @@ def build_cleaned_df(row_data, columns):
 
 def melt_and_parse(cleaned_df):
     """Melt DataFrame into long format and parse Quarter/Year."""
-    id_vars = ["Sub-Header", "Financial Metric"]
+    id_vars = ["sub-header", "financial metric"]
     value_vars = [c for c in cleaned_df.columns if c not in id_vars]
-    melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="Quarter/Year", value_name="Financial Amount")
+    melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="quarter/year", value_name="financial_amount")
     
-    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
-    melted["Quarter"], melted["Year"] = quarter_year[0], quarter_year[1]
-    melted.dropna(subset=["Quarter", "Year", "Financial Amount"], inplace=True)
+    quarter_year = melted["quarter/year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
+    melted["quarter"], melted["year"] = quarter_year[0], quarter_year[1]
+    melted.dropna(subset=["quarter", "year", "financial_amount"], inplace=True)
     return melted
 
 def attach_metadata(melted, metadata):
@@ -132,34 +132,38 @@ def process_workbook(file_path, output_file_path):
             all_data.append(melted)
 
     combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-    combined_df.drop_duplicates(inplace=True)  # Ensure no duplicates
-    combined_df.to_csv(output_file_path, index=False)
+    combined_df.drop_duplicates(inplace=True)  # Remove duplicates
+    combined_df.to_csv(output_file_path, index=False, encoding="utf-8")  # Ensure UTF-8 encoding
     print(f"\nProcessed workbook saved at: {output_file_path}")
 
 # Test-related functions
 
 def test_shapes_match(input_path, output_path):
-    """Test that input columns match output rows."""
+    """Test that input shape matches output rows (per sheet: rows * columns = total output rows)."""
     df_input = pd.read_excel(input_path, None)  # Load all sheets
-    total_input_cols = sum([df.shape[1] for df in df_input.values()])
+    total_input_cells = sum([df.shape[0] * df.shape[1] for df in df_input.values()])
     df_output = pd.read_csv(output_path)
     total_output_rows = df_output.shape[0]
-    assert total_input_cols == total_output_rows, "Mismatch between input columns and output rows!"
+    assert total_input_cells == total_output_rows, "Mismatch between input cells and output rows!"
 
 def test_aggregates_match(input_path, output_path):
     """Test that aggregate Financial Amounts match."""
     df_input = pd.read_excel(input_path, None)  # Load all sheets
     total_input_sum = sum([pd.DataFrame(sheet).iloc[:, 1:].sum().sum() for sheet in df_input.values()])
     df_output = pd.read_csv(output_path)
-    total_output_sum = df_output["Financial Amount"].sum()
+    total_output_sum = df_output["financial_amount"].sum()
     assert round(total_input_sum, 2) == round(total_output_sum, 2), "Mismatch in Financial Amount totals!"
 
 if __name__ == "__main__":
-    # Specify input and output folder paths
+    # Specify input and output paths
     input_folder = "data/input"
     output_folder = "data/output"
-    process_workbook(os.path.join(input_folder, "example.xlsx"), os.path.join(output_folder, "example.csv"))
+
+    input_file = os.path.join(input_folder, "example.xlsx")
+    output_file = os.path.join(output_folder, "example.csv")
+
+    process_workbook(input_file, output_file)
 
     # Run unit tests
-    test_shapes_match("data/input/example.xlsx", "data/output/example.csv")
-    test_aggregates_match("data/input/example.xlsx", "data/output/example.csv")
+    test_shapes_match(input_file, output_file)
+    test_aggregates_match(input_file, output_file)
