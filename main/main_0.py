@@ -15,16 +15,16 @@ def detect_bold_rows(sheet):
 def extract_metadata(data, sheet_name, file_path):
     """Extract metadata from the first 8 rows of the sheet."""
     return {
-        "Sheet Name": sheet_name,
-        "Workbook Name": file_path.split('/')[-1],
-        "Meta 1": data[0][0] if len(data) > 0 else None,
-        "Meta 2": data[1][0] if len(data) > 1 else None,
-        "Meta 3": data[2][0] if len(data) > 2 else None,
-        "Meta 4": data[3][0] if len(data) > 3 else None,
-        "Meta 5": data[4][0] if len(data) > 4 else None,
-        "Meta 6": data[5][0] if len(data) > 5 else None,
-        "Meta 7": data[6][0] if len(data) > 6 else None,
-        "Meta 8": data[7][0] if len(data) > 7 else None,
+        "sheet_name": sheet_name,
+        "workbook_name": file_path.split('/')[-1],
+        "meta_1": data[0][0] if len(data) > 0 else None,
+        "meta_2": data[1][0] if len(data) > 1 else None,
+        "meta_3": data[2][0] if len(data) > 2 else None,
+        "meta_4": data[3][0] if len(data) > 3 else None,
+        "meta_5": data[4][0] if len(data) > 4 else None,
+        "meta_6": data[5][0] if len(data) > 5 else None,
+        "meta_7": data[6][0] if len(data) > 6 else None,
+        "meta_8": data[7][0] if len(data) > 7 else None,
     }
 
 def process_sheet(sheet, sheet_name, file_path):
@@ -43,7 +43,7 @@ def process_sheet(sheet, sheet_name, file_path):
         print(f"Skipping {sheet_name}; no data after skip_count.")
         return None
 
-    tmp_df.columns = [str(col).strip().lower() if pd.notnull(col) else "unnamed_column" for col in tmp_df.iloc[0]]
+    tmp_df.columns = [str(col).strip().lower().replace(" ", "_") if pd.notnull(col) else "unnamed_column" for col in tmp_df.iloc[0]]
     tmp_df = tmp_df.iloc[1:].dropna(axis=1, how='all').copy()
     if tmp_df.empty:
         print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
@@ -76,12 +76,12 @@ def build_row_data(tmp_df, bold_indices, skip_count):
     for i, row_series in tmp_df.iterrows():
         excel_row = i + skip_count + 1
         is_bold = excel_row in bold_indices
-        colA_value = row_series[col_a_name].strip() if isinstance(row_series[col_a_name], str) else ""
+        col_a_value = row_series[col_a_name].strip() if isinstance(row_series[col_a_name], str) else ""
 
         row_dict = {
             "excel_row": excel_row,
             "is_bold": is_bold,
-            "colA_value": colA_value,
+            "col_a_value": col_a_value,
             "other_values": {c: row_series[c] for c in other_cols},
         }
         row_data.append(row_dict)
@@ -92,25 +92,25 @@ def assign_sub_headers(row_data):
     current_subheader = None
     for row in reversed(row_data):
         if row["is_bold"]:
-            current_subheader = row["colA_value"]
+            current_subheader = row["col_a_value"]
         row["sub_header"] = current_subheader
 
 def build_cleaned_df(row_data, columns):
     """Build a cleaned DataFrame from row data."""
     cleaned_rows = []
     for row in row_data:
-        new_row = {"Sub-Header": row.get("sub_header"), "Financial Metric": row["colA_value"]}
+        new_row = {"sub_header": row.get("sub_header"), "financial_metric": row["col_a_value"]}
         new_row.update(row["other_values"])
         cleaned_rows.append(new_row)
     return pd.DataFrame(cleaned_rows)
 
 def melt_and_parse(cleaned_df):
     """Melt DataFrame into long format and parse Quarter/Year."""
-    id_vars = ["sub-header", "financial metric"]
+    id_vars = ["sub_header", "financial_metric"]
     value_vars = [c for c in cleaned_df.columns if c not in id_vars]
-    melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="quarter/year", value_name="financial_amount")
+    melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="quarter_year", value_name="financial_amount")
     
-    quarter_year = melted["quarter/year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
+    quarter_year = melted["quarter_year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
     melted["quarter"], melted["year"] = quarter_year[0], quarter_year[1]
     melted.dropna(subset=["quarter", "year", "financial_amount"], inplace=True)
     return melted
@@ -133,6 +133,7 @@ def process_workbook(file_path, output_file_path):
 
     combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
     combined_df.drop_duplicates(inplace=True)  # Remove duplicates
+    combined_df.columns = [col.lower().replace(" ", "_") for col in combined_df.columns]  # Format columns
     combined_df.to_csv(output_file_path, index=False, encoding="utf-8")  # Ensure UTF-8 encoding
     print(f"\nProcessed workbook saved at: {output_file_path}")
 
