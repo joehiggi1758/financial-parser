@@ -155,11 +155,15 @@ def process_workbook(file_path, output_file_path):
 # Test-related functions
 
 def test_shapes_match(input_path, output_path, expected_sizes):
-    """Test that input elements match expected output rows."""
-    total_expected_rows = sum(expected_sizes.values())
-    df_output = pd.read_csv(output_path)
-    total_output_rows = df_output.shape[0]
-    assert total_output_rows == total_expected_rows, f"Mismatch: Expected {total_expected_rows}, got {total_output_rows}!"
+    """Test that input cells match output cells in aggregate."""
+    df_output = pd.read_csv(output_path, encoding='utf-8')  # Ensure UTF-8 encoding on import
+    total_output_cells = df_output.shape[0] * df_output.shape[1]  # Total cells in the output
+
+    total_expected_cells = sum(expected_sizes.values())  # Sum of expected sizes from all sheets
+
+    assert total_output_cells == total_expected_cells, (
+        f"Mismatch in cell counts: Expected {total_expected_cells}, but got {total_output_cells}!"
+    )
 
 if __name__ == "__main__":
     # Specify input and output folder paths
