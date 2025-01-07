@@ -45,8 +45,10 @@ def process_sheet(sheet, sheet_name, file_path):
         return None
 
     # First row of tmp_df becomes the new column headers
-    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" 
-                      for col in tmp_df.iloc[0]]
+    tmp_df.columns = [
+        str(col).strip() if pd.notnull(col) else "Unnamed Column" 
+        for col in tmp_df.iloc[0]
+    ]
     tmp_df = tmp_df.iloc[1:].dropna(axis=1, how='all').copy()
     if tmp_df.empty:
         print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
@@ -117,35 +119,34 @@ def parse_quarter_year(value):
       - Year
 
     Cases:
-      - "Q1 FY29" or "Q2-FY29" -> Quarter="Q1", Year="2029"
-      - "FY29"                -> Quarter=None, Year="2029"
-      - "All Periods"         -> Quarter="All Periods", Year=None
-      - Otherwise             -> Quarter=None, Year=None
+      - "Q1 FY29", "Q2-FY29" -> Quarter="Q1", Year="2029"
+      - "FY29"               -> Quarter=None, Year="2029"
+      - "All Periods"        -> Quarter="All Periods", Year=None
+      - Otherwise            -> Quarter=None, Year=None
     """
     value_str = str(value).strip().lower()
     if value_str == "all periods":
-        # Return "All Periods" in the Quarter, no Year
         return ("All Periods", None)
 
-    # Look for something like "Q1 FY29", "Q2-FY30", etc.
+    # Look for "Q1 FY29" or "Q2-FY2030", etc.
     match_qfy = re.match(r'^(Q\d)\s*[-]?\s*(FY(\d{2,4}))$', value_str, re.IGNORECASE)
     if match_qfy:
-        quarter = match_qfy.group(1).upper()  # e.g. "Q1"
-        year_abbrev = match_qfy.group(3)      # e.g. "29" or "2029"
+        quarter = match_qfy.group(1).upper()  # e.g., "Q1"
+        year_abbrev = match_qfy.group(3)      # e.g., "29" or "2029"
         year = convert_fy_year(year_abbrev)
         return (quarter, year)
 
     # Look for just "FY29"
     match_fy = re.match(r'^fy(\d{2,4})$', value_str, re.IGNORECASE)
     if match_fy:
-        year_abbrev = match_fy.group(1)       # e.g. "29" or "2029"
+        year_abbrev = match_fy.group(1)       # e.g., "29" or "2029"
         year = convert_fy_year(year_abbrev)
         return (None, year)
 
     return (None, None)
 
 def convert_fy_year(year_str):
-    """Convert a 2-digit or 4-digit string from '29' to '2029' or keep as-is if already 4 digits."""
+    """Convert a 2-digit or 4-digit string from '29' to '2029' or keep if already 4 digits."""
     if len(year_str) == 2:
         return "20" + year_str
     return year_str
@@ -164,9 +165,8 @@ def melt_and_parse(cleaned_df):
     # Parse "Quarter/Year" values
     melted["Quarter"], melted["Year"] = zip(*melted["Quarter/Year"].apply(parse_quarter_year))
 
-    # Keep rows that have a Financial Amount (drop rows that are empty or NaN)
+    # Keep rows only if there's a valid Financial Amount
     melted.dropna(subset=["Financial Amount"], inplace=True)
-
     return melted
 
 def attach_metadata(melted, metadata):
@@ -186,14 +186,24 @@ def process_workbook(file_path, output_file_path):
             all_data.append(melted)
 
     combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-    # Remove duplicate rows across all columns (default)
+
+    # --- Fix for "TypeError: unhashable type: 'Series'" ---
+    # Convert any unhashable objects (lists, dicts, sets, or pd.Series) to strings.
+    def make_hashable(value):
+        if isinstance(value, (dict, list, set, pd.Series)):
+            return str(value)
+        return value
+
+    combined_df = combined_df.applymap(make_hashable)
+
+    # Now safely drop duplicates across all columns
     combined_df.drop_duplicates(inplace=True)
 
     # Force UTF-8 encoding on the output
     combined_df.to_csv(output_file_path, index=False, encoding='utf-8')
     print(f"\nProcessed workbook saved at: {output_file_path}")
 
-# Test-related functions
+# ------------------ TEST FUNCTIONS ------------------
 
 def test_shapes_match(input_path, output_path):
     """
@@ -228,7 +238,7 @@ def test_aggregates_match(input_path, output_path):
     )
 
 if __name__ == "__main__":
-    # Specify input and output folder paths
+    # Example usage:
     input_folder = "data/input"
     output_folder = "data/output"
     process_workbook(
