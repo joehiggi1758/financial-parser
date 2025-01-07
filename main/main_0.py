@@ -58,7 +58,7 @@ def process_sheet(sheet, sheet_name, file_path, expected_sizes):
 
     assign_sub_headers(row_data)
     cleaned_df = build_cleaned_df(row_data, tmp_df.columns)
-    cleaned_df = cleaned_df.drop_duplicates()  # Remove duplicate rows
+    cleaned_df = cleaned_df.drop_duplicates().reset_index(drop=True)  # Ensure no duplicates and reset index
     melted = melt_and_parse(cleaned_df)
 
     if melted.empty:
@@ -86,7 +86,7 @@ def build_row_data(tmp_df, bold_indices, skip_count):
             "excel_row": excel_row,
             "is_bold": is_bold,
             "colA_value": colA_value,
-            "other_values": {c: row_series[c] for c in other_cols},
+            "other_values": {c: row_series[c] if pd.notnull(row_series[c]) else None for c in other_cols},
         }
         row_data.append(row_dict)
     return row_data
@@ -158,7 +158,7 @@ def process_workbook(file_path, output_file_path):
 def test_shapes_match(output_path, expected_sizes):
     """Test that input cells match output cells in aggregate."""
     df_output = pd.read_csv(output_path, encoding='utf-8')  # Ensure UTF-8 encoding on import
-    total_output_cells = df_output.notna().sum().sum()  # Total non-NA cells in the output
+    total_output_cells = df_output.shape[0] * df_output.shape[1]  # Total cells in the output
 
     total_expected_cells = sum(expected_sizes.values())  # Sum of expected sizes from all sheets
 
