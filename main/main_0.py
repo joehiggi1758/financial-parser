@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import pandas as pd
 from openpyxl import load_workbook
@@ -44,7 +45,8 @@ def process_sheet(sheet, sheet_name, file_path):
         return None
 
     # First row of tmp_df becomes the new column headers
-    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" for col in tmp_df.iloc[0]]
+    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" 
+                      for col in tmp_df.iloc[0]]
     tmp_df = tmp_df.iloc[1:].dropna(axis=1, how='all').copy()
     if tmp_df.empty:
         print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
@@ -108,21 +110,63 @@ def build_cleaned_df(row_data, columns):
         cleaned_rows.append(new_row)
     return pd.DataFrame(cleaned_rows)
 
+def parse_quarter_year(value):
+    """
+    Parse a Quarter/Year string into:
+      - Quarter
+      - Year
+
+    Cases:
+      - "Q1 FY29" or "Q2-FY29" -> Quarter="Q1", Year="2029"
+      - "FY29"                -> Quarter=None, Year="2029"
+      - "All Periods"         -> Quarter="All Periods", Year=None
+      - Otherwise             -> Quarter=None, Year=None
+    """
+    value_str = str(value).strip().lower()
+    if value_str == "all periods":
+        # Return "All Periods" in the Quarter, no Year
+        return ("All Periods", None)
+
+    # Look for something like "Q1 FY29", "Q2-FY30", etc.
+    match_qfy = re.match(r'^(Q\d)\s*[-]?\s*(FY(\d{2,4}))$', value_str, re.IGNORECASE)
+    if match_qfy:
+        quarter = match_qfy.group(1).upper()  # e.g. "Q1"
+        year_abbrev = match_qfy.group(3)      # e.g. "29" or "2029"
+        year = convert_fy_year(year_abbrev)
+        return (quarter, year)
+
+    # Look for just "FY29"
+    match_fy = re.match(r'^fy(\d{2,4})$', value_str, re.IGNORECASE)
+    if match_fy:
+        year_abbrev = match_fy.group(1)       # e.g. "29" or "2029"
+        year = convert_fy_year(year_abbrev)
+        return (None, year)
+
+    return (None, None)
+
+def convert_fy_year(year_str):
+    """Convert a 2-digit or 4-digit string from '29' to '2029' or keep as-is if already 4 digits."""
+    if len(year_str) == 2:
+        return "20" + year_str
+    return year_str
+
 def melt_and_parse(cleaned_df):
     """Melt DataFrame into long format and parse Quarter/Year."""
     id_vars = ["Sub-Header", "Financial Metric"]
     value_vars = [c for c in cleaned_df.columns if c not in id_vars]
     melted = cleaned_df.melt(
-        id_vars=id_vars, 
-        value_vars=value_vars, 
-        var_name="Quarter/Year", 
+        id_vars=id_vars,
+        value_vars=value_vars,
+        var_name="Quarter/Year",
         value_name="Financial Amount"
     )
-    
-    # Extract patterns like Q1 FY22, Q2-FY23, etc.
-    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
-    melted["Quarter"], melted["Year"] = quarter_year[0], quarter_year[1]
-    melted.dropna(subset=["Quarter", "Year", "Financial Amount"], inplace=True)
+
+    # Parse "Quarter/Year" values
+    melted["Quarter"], melted["Year"] = zip(*melted["Quarter/Year"].apply(parse_quarter_year))
+
+    # Keep rows that have a Financial Amount (drop rows that are empty or NaN)
+    melted.dropna(subset=["Financial Amount"], inplace=True)
+
     return melted
 
 def attach_metadata(melted, metadata):
@@ -144,7 +188,7 @@ def process_workbook(file_path, output_file_path):
     combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
     # Remove duplicate rows across all columns (default)
     combined_df.drop_duplicates(inplace=True)
-    
+
     # Force UTF-8 encoding on the output
     combined_df.to_csv(output_file_path, index=False, encoding='utf-8')
     print(f"\nProcessed workbook saved at: {output_file_path}")
@@ -171,7 +215,10 @@ def test_aggregates_match(input_path, output_path):
     """Test that aggregate Financial Amounts match."""
     df_input = pd.read_excel(input_path, None)  # Load all sheets
     # Sum up the numeric values in columns (excluding the first, which might be 'Financial Metric')
-    total_input_sum = sum([pd.DataFrame(sheet).iloc[:, 1:].sum().sum() for sheet in df_input.values()])
+    total_input_sum = sum([
+        pd.DataFrame(sheet).iloc[:, 1:].sum().sum() 
+        for sheet in df_input.values()
+    ])
 
     df_output = pd.read_csv(output_path)
     total_output_sum = df_output["Financial Amount"].sum()
@@ -184,8 +231,10 @@ if __name__ == "__main__":
     # Specify input and output folder paths
     input_folder = "data/input"
     output_folder = "data/output"
-    process_workbook(os.path.join(input_folder, "example.xlsx"), 
-                     os.path.join(output_folder, "example.csv"))
+    process_workbook(
+        os.path.join(input_folder, "example.xlsx"), 
+        os.path.join(output_folder, "example.csv")
+    )
 
     # Run unit tests
     test_shapes_match("data/input/example.xlsx", "data/output/example.csv")
