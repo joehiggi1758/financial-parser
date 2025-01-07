@@ -58,7 +58,12 @@ def process_sheet(sheet, sheet_name, file_path, expected_sizes):
 
     assign_sub_headers(row_data)
     cleaned_df = build_cleaned_df(row_data, tmp_df.columns)
-    cleaned_df = cleaned_df.drop_duplicates().reset_index(drop=True)  # Ensure no duplicates and reset index
+
+    # Ensure all data is hashable and drop duplicates
+    for col in cleaned_df.columns:
+        cleaned_df[col] = cleaned_df[col].apply(lambda x: tuple(x) if isinstance(x, list) else x)
+    cleaned_df = cleaned_df.drop_duplicates().reset_index(drop=True)
+
     melted = melt_and_parse(cleaned_df)
 
     if melted.empty:
