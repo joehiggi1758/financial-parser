@@ -58,6 +58,7 @@ def process_sheet(sheet, sheet_name, file_path, expected_sizes):
 
     assign_sub_headers(row_data)
     cleaned_df = build_cleaned_df(row_data, tmp_df.columns)
+    cleaned_df = cleaned_df.drop_duplicates()  # Remove duplicate rows
     melted = melt_and_parse(cleaned_df)
 
     if melted.empty:
@@ -154,10 +155,10 @@ def process_workbook(file_path, output_file_path):
 
 # Test-related functions
 
-def test_shapes_match(input_path, output_path, expected_sizes):
+def test_shapes_match(output_path, expected_sizes):
     """Test that input cells match output cells in aggregate."""
     df_output = pd.read_csv(output_path, encoding='utf-8')  # Ensure UTF-8 encoding on import
-    total_output_cells = df_output.shape[0] * df_output.shape[1]  # Total cells in the output
+    total_output_cells = df_output.notna().sum().sum()  # Total non-NA cells in the output
 
     total_expected_cells = sum(expected_sizes.values())  # Sum of expected sizes from all sheets
 
@@ -175,4 +176,4 @@ if __name__ == "__main__":
     expected_sizes = process_workbook(input_file, output_file)
 
     # Run unit tests
-    test_shapes_match(input_file, output_file, expected_sizes)
+    test_shapes_match(output_file, expected_sizes)
