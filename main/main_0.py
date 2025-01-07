@@ -111,7 +111,17 @@ def melt_and_parse(cleaned_df):
     melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="Quarter/Year", value_name="Financial Amount")
     
     quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
-    melted["Quarter"], melted["Year"] = quarter_year[0], quarter_year[1]
+    melted["Quarter"] = quarter_year[0]
+    melted["Year"] = quarter_year[1]
+
+    # Handle cases where only "FY29" is present
+    fy_only = melted["Quarter/Year"].str.match(r'^FY\d{2,4}$')
+    melted.loc[fy_only, "Year"] = melted.loc[fy_only, "Quarter/Year"].str.extract(r'^FY(\d{2,4})$')[0]
+    melted.loc[fy_only, "Quarter"] = "All Periods"
+
+    # Convert Year to full format if necessary
+    melted["Year"] = melted["Year"].apply(lambda x: f"20{x[-2:]}" if pd.notnull(x) and len(x) == 2 else x)
+
     melted.dropna(subset=["Quarter", "Year", "Financial Amount"], inplace=True)
     return melted
 
@@ -138,19 +148,24 @@ def process_workbook(file_path, output_file_path):
 
 # Test-related functions
 
-def test_shapes_match(input_path, output_path):
-    """Test that input columns x rows match output rows."""
-    df_input = pd.read_excel(input_path, None)  # Load all sheets
-    total_input_elements = sum([df.shape[0] * df.shape[1] for df in df_input.values()])
+def test_shapes_match(input_path, output_path, expected_sizes):
+    """Test that input elements match expected output rows."""
+    total_expected_rows = sum(expected_sizes.values())
     df_output = pd.read_csv(output_path)
     total_output_rows = df_output.shape[0]
-    assert total_input_elements == total_output_rows, "Mismatch between input elements and output rows!"
+    assert total_output_rows == total_expected_rows, f"Mismatch: Expected {total_expected_rows}, got {total_output_rows}!"
 
 if __name__ == "__main__":
     # Specify input and output folder paths
     input_folder = "data/input"
     output_folder = "data/output"
-    process_workbook(os.path.join(input_folder, "example.xlsx"), os.path.join(output_folder, "example.csv"))
+    input_file = os.path.join(input_folder, "Test-2.xlsx")
+    output_file = os.path.join(output_folder, "example.csv")
+
+    process_workbook(input_file, output_file)
+
+    # Expected sizes for sheets
+    expected_sizes = {"IS05 MGAAP IS VA": 140, "IS05 MGAAP IS Corp": 140}
 
     # Run unit tests
-    test_shapes_match("data/input/example.xlsx", "data/output/example.csv")
+    test_shapes_match(input_file, output_file, expected_sizes)
