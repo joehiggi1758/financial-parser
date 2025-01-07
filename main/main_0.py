@@ -27,7 +27,7 @@ def extract_metadata(data, sheet_name, file_path):
         "Meta 8": data[7][0] if len(data) > 7 else None,
     }
 
-def process_sheet(sheet, sheet_name, file_path):
+def process_sheet(sheet, sheet_name, file_path, expected_sizes):
     """Process a single sheet and return a cleaned DataFrame."""
     data = list(sheet.values)
     skip_count = 8
@@ -63,6 +63,9 @@ def process_sheet(sheet, sheet_name, file_path):
     if melted.empty:
         print(f"Skipping {sheet_name}; melted DataFrame is empty.")
         return None
+
+    # Update expected_sizes with the calculated size for this sheet
+    expected_sizes[sheet_name] = cleaned_df.shape[0] * cleaned_df.shape[1]
 
     attach_metadata(melted, metadata)
     return melted
@@ -134,10 +137,11 @@ def process_workbook(file_path, output_file_path):
     """Process an Excel workbook and save the combined DataFrame to a CSV file."""
     wb = load_workbook(file_path, data_only=True)
     all_data = []
+    expected_sizes = {}  # To track the expected sizes
 
     for sheet_name in wb.sheetnames:
         sheet = wb[sheet_name]
-        melted = process_sheet(sheet, sheet_name, file_path)
+        melted = process_sheet(sheet, sheet_name, file_path, expected_sizes)
         if melted is not None:
             all_data.append(melted)
 
@@ -145,6 +149,8 @@ def process_workbook(file_path, output_file_path):
     combined_df.drop_duplicates(inplace=True)  # Ensure no duplicates
     combined_df.to_csv(output_file_path, index=False, encoding='utf-8')  # Force UTF-8 encoding
     print(f"\nProcessed workbook saved at: {output_file_path}")
+
+    return expected_sizes
 
 # Test-related functions
 
@@ -162,10 +168,7 @@ if __name__ == "__main__":
     input_file = os.path.join(input_folder, "Test-2.xlsx")
     output_file = os.path.join(output_folder, "example.csv")
 
-    process_workbook(input_file, output_file)
-
-    # Expected sizes for sheets
-    expected_sizes = {"IS05 MGAAP IS VA": 140, "IS05 MGAAP IS Corp": 140}
+    expected_sizes = process_workbook(input_file, output_file)
 
     # Run unit tests
     test_shapes_match(input_file, output_file, expected_sizes)
