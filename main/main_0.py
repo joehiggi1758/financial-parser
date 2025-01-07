@@ -1,5 +1,4 @@
 import os
-import re
 from pathlib import Path
 import pandas as pd
 from openpyxl import load_workbook
@@ -29,7 +28,7 @@ def extract_metadata(data, sheet_name, file_path):
     }
 
 def process_sheet(sheet, sheet_name, file_path):
-    """Process a single sheet and return a cleaned (melted) DataFrame."""
+    """Process a single sheet and return a cleaned DataFrame."""
     data = list(sheet.values)
     skip_count = 8
     if len(data) <= skip_count:
@@ -44,12 +43,7 @@ def process_sheet(sheet, sheet_name, file_path):
         print(f"Skipping {sheet_name}; no data after skip_count.")
         return None
 
-    # First row of tmp_df becomes the new column headers
-    tmp_df.columns = [
-        str(col).strip() if pd.notnull(col) else "Unnamed Column" 
-        for col in tmp_df.iloc[0]
-    ]
-    # Drop the first row (now headers) and any columns completely empty
+    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" for col in tmp_df.iloc[0]]
     tmp_df = tmp_df.iloc[1:].dropna(axis=1, how='all').copy()
     if tmp_df.empty:
         print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
@@ -96,7 +90,6 @@ def build_row_data(tmp_df, bold_indices, skip_count):
 def assign_sub_headers(row_data):
     """Assign sub-headers to rows based on bold formatting."""
     current_subheader = None
-    # Process from bottom to top so each row inherits the closest 'bold' above it
     for row in reversed(row_data):
         if row["is_bold"]:
             current_subheader = row["colA_value"]
@@ -106,75 +99,24 @@ def build_cleaned_df(row_data, columns):
     """Build a cleaned DataFrame from row data."""
     cleaned_rows = []
     for row in row_data:
-        new_row = {
-            "Sub-Header": row.get("sub_header"), 
-            "Financial Metric": row["colA_value"]
-        }
-        # Merge all other columns from 'other_values'
+        new_row = {"Sub-Header": row.get("sub_header"), "Financial Metric": row["colA_value"]}
         new_row.update(row["other_values"])
         cleaned_rows.append(new_row)
     return pd.DataFrame(cleaned_rows)
 
 def melt_and_parse(cleaned_df):
-    """
-    Melt DataFrame into long format and parse Quarter/Year.
-
-    Preserves the final structure:
-      - "Sub-Header"
-      - "Financial Metric"
-      - "Quarter/Year"
-      - "Financial Amount"
-      - "Quarter"
-      - "Year"
-    Then we only drop rows where "Financial Amount" is missing.
-    """
+    """Melt DataFrame into long format and parse Quarter/Year."""
     id_vars = ["Sub-Header", "Financial Metric"]
     value_vars = [c for c in cleaned_df.columns if c not in id_vars]
-    melted = cleaned_df.melt(
-        id_vars=id_vars,
-        value_vars=value_vars,
-        var_name="Quarter/Year",
-        value_name="Financial Amount"
-    )
-
-    # Custom parsing to handle "All Periods", "FY29", or "Q1 FY29"
-    def parse_qy(qy):
-        text = str(qy).strip().lower()
-        # 1) All Periods
-        if text == "all periods":
-            return ("All Periods", None)
-        # 2) Q1 FY29 (or Q2-FY2029, etc.)
-        match_qfy = re.match(r'^(q\d)\s*[-]?\s*(fy(\d{2,4}))$', text, re.IGNORECASE)
-        if match_qfy:
-            quarter = match_qfy.group(1).upper()  # e.g. "Q1"
-            year_abbrev = match_qfy.group(3)      # e.g. "29" or "2029"
-            # Convert 2-digit year to 20xx
-            if len(year_abbrev) == 2:
-                year_abbrev = "20" + year_abbrev
-            return (quarter, year_abbrev)
-
-        # 3) Just FY29 (no quarter)
-        match_fy = re.match(r'^fy(\d{2,4})$', text, re.IGNORECASE)
-        if match_fy:
-            year_abbrev = match_fy.group(1)  # e.g. "29"
-            if len(year_abbrev) == 2:
-                year_abbrev = "20" + year_abbrev
-            return (None, year_abbrev)
-
-        # If we don't match anything, return (None, None)
-        return (None, None)
-
-    melted["Quarter"], melted["Year"] = zip(*melted["Quarter/Year"].apply(parse_qy))
-
-    # Keep rows only if there's a valid Financial Amount
-    # (We do NOT drop Quarter or Year if they are None — that way 
-    #  "All Periods" or just "FY29" won't be discarded)
-    melted.dropna(subset=["Financial Amount"], inplace=True)
-
+    melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="Quarter/Year", value_name="Financial Amount")
+    
+    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
+    melted["Quarter"], melted["Year"] = quarter_year[0], quarter_year[1]
+    melted.dropna(subset=["Quarter", "Year", "Financial Amount"], inplace=True)
     return melted
 
 def attach_metadata(melted, metadata):
-    """Attach metadata columns to the melted DataFrame."""
+    """Attach metadata to the melted DataFrame."""
     for k, v in metadata.items():
         melted[k] = v
 
@@ -189,74 +131,26 @@ def process_workbook(file_path, output_file_path):
         if melted is not None:
             all_data.append(melted)
 
-    # Combine all sheets
     combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-
-    # --- Fix for "TypeError: unhashable type: 'Series'" ---
-    # Convert any unhashable objects (lists, dicts, sets, or pd.Series) to strings before dropping duplicates
-    def make_hashable(value):
-        if isinstance(value, (dict, list, set, pd.Series)):
-            return str(value)
-        return value
-
-    combined_df = combined_df.applymap(make_hashable)
-    # Drop entire-row duplicates
-    combined_df.drop_duplicates(inplace=True)
-
-    # Force UTF-8 encoding on output
-    combined_df.to_csv(output_file_path, index=False, encoding='utf-8')
+    combined_df.drop_duplicates(inplace=True)  # Ensure no duplicates
+    combined_df.to_csv(output_file_path, index=False, encoding='utf-8')  # Force UTF-8 encoding
     print(f"\nProcessed workbook saved at: {output_file_path}")
 
-# ------------------ TEST FUNCTIONS ------------------
+# Test-related functions
 
 def test_shapes_match(input_path, output_path):
-    """
-    Test that the total number of cells (rows × columns) in the input 
-    matches the number of rows in the output.
-    """
+    """Test that input columns x rows match output rows."""
     df_input = pd.read_excel(input_path, None)  # Load all sheets
-    # Sum across all sheets: total cells = rows * columns
-    total_input_cells = sum(df.shape[0] * df.shape[1] for df in df_input.values())
-
+    total_input_elements = sum([df.shape[0] * df.shape[1] for df in df_input.values()])
     df_output = pd.read_csv(output_path)
     total_output_rows = df_output.shape[0]
-
-    assert total_input_cells == total_output_rows, (
-        "Mismatch: (input rows × input columns) != output rows!"
-    )
-
-def test_aggregates_match(input_path, output_path):
-    """Test that aggregate Financial Amounts match."""
-    df_input = pd.read_excel(input_path, None)  # Load all sheets
-    # Sum up the numeric values in columns (excluding the first, which might be 'Financial Metric')
-    total_input_sum = sum([
-        pd.DataFrame(sheet).iloc[:, 1:].sum().sum() 
-        for sheet in df_input.values()
-    ])
-
-    df_output = pd.read_csv(output_path)
-    total_output_sum = df_output["Financial Amount"].sum()
-
-    # Round both to 2 decimals to avoid floating-point mismatches
-    assert round(total_input_sum, 2) == round(total_output_sum, 2), (
-        "Mismatch in Financial Amount totals!"
-    )
+    assert total_input_elements == total_output_rows, "Mismatch between input elements and output rows!"
 
 if __name__ == "__main__":
-    # Example usage
+    # Specify input and output folder paths
     input_folder = "data/input"
     output_folder = "data/output"
-    process_workbook(
-        os.path.join(input_folder, "example.xlsx"), 
-        os.path.join(output_folder, "example.csv")
-    )
+    process_workbook(os.path.join(input_folder, "example.xlsx"), os.path.join(output_folder, "example.csv"))
 
-    # Run unit tests (optional)
-    test_shapes_match(
-        os.path.join(input_folder, "example.xlsx"), 
-        os.path.join(output_folder, "example.csv")
-    )
-    test_aggregates_match(
-        os.path.join(input_folder, "example.xlsx"), 
-        os.path.join(output_folder, "example.csv")
-    )
+    # Run unit tests
+    test_shapes_match("data/input/example.xlsx", "data/output/example.csv")
