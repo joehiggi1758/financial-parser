@@ -3,8 +3,6 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import load_workbook
 
-# Functions
-
 def detect_bold_rows(sheet):
     """Return a set of bold row indices (1-based) in column A."""
     bold_indices = set()
@@ -134,31 +132,34 @@ def process_workbook(file_path, output_file_path):
             all_data.append(melted)
 
     combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
+    combined_df.drop_duplicates(inplace=True)  # Ensure no duplicates
     combined_df.to_csv(output_file_path, index=False)
     print(f"\nProcessed workbook saved at: {output_file_path}")
 
-def process_excel_folder(input_folder, output_folder):
-    """Process all Excel files in a folder."""
-    input_folder = Path(input_folder)
-    output_folder = Path(output_folder)
+# Test-related functions
 
-    # Ensure the output folder exists
-    output_folder.mkdir(parents=True, exist_ok=True)
+def test_shapes_match(input_path, output_path):
+    """Test that input columns match output rows."""
+    df_input = pd.read_excel(input_path, None)  # Load all sheets
+    total_input_cols = sum([df.shape[1] for df in df_input.values()])
+    df_output = pd.read_csv(output_path)
+    total_output_rows = df_output.shape[0]
+    assert total_input_cols == total_output_rows, "Mismatch between input columns and output rows!"
 
-    for file in input_folder.glob("*.xlsx"):
-        print(f"Processing file: {file.name}")
-        input_file_path = str(file)
-        output_file_path = str(output_folder / f"{file.stem}.csv")
-        
-        try:
-            process_workbook(input_file_path, output_file_path)
-            print(f"File processed successfully: {file.name}")
-        except Exception as e:
-            print(f"Error processing {file.name}: {e}")
+def test_aggregates_match(input_path, output_path):
+    """Test that aggregate Financial Amounts match."""
+    df_input = pd.read_excel(input_path, None)  # Load all sheets
+    total_input_sum = sum([pd.DataFrame(sheet).iloc[:, 1:].sum().sum() for sheet in df_input.values()])
+    df_output = pd.read_csv(output_path)
+    total_output_sum = df_output["Financial Amount"].sum()
+    assert round(total_input_sum, 2) == round(total_output_sum, 2), "Mismatch in Financial Amount totals!"
 
 if __name__ == "__main__":
     # Specify input and output folder paths
     input_folder = "data/input"
     output_folder = "data/output"
+    process_workbook(os.path.join(input_folder, "example.xlsx"), os.path.join(output_folder, "example.csv"))
 
-    process_excel_folder(input_folder, output_folder)
+    # Run unit tests
+    test_shapes_match("data/input/example.xlsx", "data/output/example.csv")
+    test_aggregates_match("data/input/example.xlsx", "data/output/example.csv")
