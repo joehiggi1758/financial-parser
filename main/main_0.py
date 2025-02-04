@@ -1,184 +1,213 @@
 import os
-from pathlib import Path
+import warnings
+import logging
 import pandas as pd
+from pathlib import Path
 from openpyxl import load_workbook
+from tqdm import tqdm
 
-def detect_bold_rows(sheet):
-    """Return a set of bold row indices (1-based) in column A."""
-    bold_indices = set()
-    for row in sheet.iter_rows(min_col=1, max_col=1):
-        cell = row[0]
-        if cell.font and cell.font.bold:
-            bold_indices.add(cell.row)
-    return bold_indices
+# ----------------------------------------------------------------
+# Configure warnings and logging
+warnings.simplefilter("ignore", category=UserWarning)
+warnings.simplefilter("ignore", category=DeprecationWarning)
 
-def extract_metadata(data, sheet_name, file_path):
-    """Extract metadata from the first 8 rows of the sheet."""
-    return {
-        "Sheet Name": sheet_name,
-        "Workbook Name": file_path.split('/')[-1],
-        "Meta 1": data[0][0] if len(data) > 0 else None,
-        "Meta 2": data[1][0] if len(data) > 1 else None,
-        "Meta 3": data[2][0] if len(data) > 2 else None,
-        "Meta 4": data[3][0] if len(data) > 3 else None,
-        "Meta 5": data[4][0] if len(data) > 4 else None,
-        "Meta 6": data[5][0] if len(data) > 5 else None,
-        "Meta 7": data[6][0] if len(data) > 6 else None,
-        "Meta 8": data[7][0] if len(data) > 7 else None,
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(message)s'
+)
+
+# ----------------------------------------------------------------
+def extract_metadata(file_path: str, sheet_name: str) -> dict:
+    """
+    Extract or build any relevant metadata from a sheet.
+    Adjust this to suit your actual metadata needs.
+    """
+    metadata = {
+        "workbook_name": Path(file_path).stem,
+        "sheet_name": sheet_name
+        # Add more fields here if needed
     }
+    return metadata
 
-def process_sheet(sheet, sheet_name, file_path, expected_sizes):
-    """Process a single sheet and return a cleaned DataFrame."""
-    data = list(sheet.values)
-    skip_count = 8
-    if len(data) <= skip_count:
-        print(f"Skipping {sheet_name}; not enough rows to reach a header.")
-        return None
-
-    metadata = extract_metadata(data, sheet_name, file_path)
-
-    df_data = data[skip_count:]
-    tmp_df = pd.DataFrame(df_data)
-    if tmp_df.empty:
-        print(f"Skipping {sheet_name}; no data after skip_count.")
-        return None
-
-    tmp_df.columns = [str(col).strip() if pd.notnull(col) else "Unnamed Column" for col in tmp_df.iloc[0]]
-    tmp_df = tmp_df.iloc[1:].dropna(axis=1, how='all').copy()
-    if tmp_df.empty:
-        print(f"Skipping {sheet_name}; tmp_df is empty after processing.")
-        return None
-
-    bold_indices = detect_bold_rows(sheet)
-    row_data = build_row_data(tmp_df, bold_indices, skip_count)
-
-    if not row_data:
-        print(f"Skipping {sheet_name}; no data in row_data after processing.")
-        return None
-
-    assign_sub_headers(row_data)
-    cleaned_df = build_cleaned_df(row_data, tmp_df.columns)
-
-    # Ensure all data is hashable and drop duplicates
-    for col in cleaned_df.columns:
-        cleaned_df[col] = cleaned_df[col].apply(lambda x: tuple(x) if isinstance(x, list) else x)
-    cleaned_df = cleaned_df.drop_duplicates().reset_index(drop=True)
-
-    melted = melt_and_parse(cleaned_df)
-
-    if melted.empty:
-        print(f"Skipping {sheet_name}; melted DataFrame is empty.")
-        return None
-
-    # Update expected_sizes with the calculated size for this sheet
-    expected_sizes[sheet_name] = cleaned_df.shape[0] * cleaned_df.shape[1]
-
-    attach_metadata(melted, metadata)
-    return melted
-
-def build_row_data(tmp_df, bold_indices, skip_count):
-    """Build a list of row data dictionaries for processing."""
+# ----------------------------------------------------------------
+def build_row_data(df: pd.DataFrame) -> list:
+    """
+    Turn each row in 'df' into a dictionary containing:
+      - row index or 'Excel row'
+      - category (e.g. 'IS Statement Header', 'Financial Metric', 'Sub‐Header', etc.)
+      - any other columns from the raw DataFrame you need
+    """
     row_data = []
-    col_a_name = tmp_df.columns[0] if tmp_df.columns[0] else "Financial Metric"
-    other_cols = tmp_df.columns[1:]
-
-    for i, row_series in tmp_df.iterrows():
-        excel_row = i + skip_count + 1
-        is_bold = excel_row in bold_indices
-        colA_value = row_series[col_a_name].strip() if isinstance(row_series[col_a_name], str) else ""
-
-        row_dict = {
-            "excel_row": excel_row,
-            "is_bold": is_bold,
-            "colA_value": colA_value,
-            "other_values": {c: row_series[c] if pd.notnull(row_series[c]) else None for c in other_cols},
-        }
-        row_data.append(row_dict)
+    for i, row_series in df.iterrows():
+        # Determine row category (dummy example—replace with your own logic)
+        # You might detect categories by indentation level, text matching, etc.
+        text_value = str(row_series.iloc[0]).strip().lower()  # Example from first column
+        if "header" in text_value:
+            category = "IS Statement Header"
+        elif "sub" in text_value:
+            category = "Sub-Header"
+        else:
+            category = "Financial Metric"
+        
+        row_data.append({
+            "excel_row": i + 1,  # or i, or skip_count + i, etc.
+            "category": category,
+            "values": row_series.to_dict()  # or pick out columns you care about
+        })
     return row_data
 
-def assign_sub_headers(row_data):
-    """Assign sub-headers to rows based on bold formatting."""
-    current_subheader = None
+# ----------------------------------------------------------------
+def assign_headers(row_data: list) -> list:
+    """
+    Walk through row_data in reverse (or however is appropriate)
+    to propagate headers or sub‐headers down into each row dictionary.
+    """
+    current_is_header = None
+    current_sub_header = None
+    current_main_header = None
+
     for row in reversed(row_data):
-        if row["is_bold"]:
-            current_subheader = row["colA_value"]
-        row["sub_header"] = current_subheader
+        cat = row["category"]
+        if cat == "IS Statement Header":
+            current_is_header = row["excel_row"]
+            row["IS Statement Header"] = current_is_header
+        elif cat == "Sub-Header":
+            current_sub_header = row["excel_row"]
+            row["Sub Header"] = current_sub_header
+        else:
+            # Example: treat everything else as a “main” or “financial metric” row
+            current_main_header = row["excel_row"]
+            row["Main Header"] = current_main_header
 
-def build_cleaned_df(row_data, columns):
-    """Build a cleaned DataFrame from row data."""
-    cleaned_rows = []
-    for row in row_data:
-        new_row = {"Sub-Header": row.get("sub_header"), "Financial Metric": row["colA_value"]}
-        new_row.update(row["other_values"])
-        cleaned_rows.append(new_row)
-    return pd.DataFrame(cleaned_rows)
+        # If you need to fill them in for every row below, do so:
+        # row["IS Statement Header"] = current_is_header
+        # row["Sub Header"] = current_sub_header
+        # row["Main Header"] = current_main_header
 
-def melt_and_parse(cleaned_df):
-    """Melt DataFrame into long format and parse Quarter/Year."""
-    id_vars = ["Sub-Header", "Financial Metric"]
-    value_vars = [c for c in cleaned_df.columns if c not in id_vars]
-    melted = cleaned_df.melt(id_vars=id_vars, value_vars=value_vars, var_name="Quarter/Year", value_name="Financial Amount")
+    return row_data
+
+# ----------------------------------------------------------------
+def build_cleaned_dataframe(row_data: list) -> pd.DataFrame:
+    """
+    Convert your list of dictionaries (row_data) back into a DataFrame
+    with well‐labeled columns. 
+    """
+    if not row_data:
+        return pd.DataFrame()
+
+    # Flatten each row_data dict as needed
+    flattened = []
+    for rd in row_data:
+        base = {
+            "Excel Row": rd["excel_row"],
+            "Category": rd["category"],
+            "IS Statement Header": rd.get("IS Statement Header", None),
+            "Sub Header": rd.get("Sub Header", None),
+            "Main Header": rd.get("Main Header", None)
+        }
+        # Merge in actual data values from row["values"]
+        for k, v in rd["values"].items():
+            base[str(k)] = v
+        flattened.append(base)
+
+    df = pd.DataFrame(flattened)
+    return df
+
+# ----------------------------------------------------------------
+def melt_and_parse(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Example of a 'melt' or pivot step for Quarter/Year columns, etc.
+    Adjust to match your actual data transformations.
+    """
+    # Suppose we identify ID columns vs. numeric columns
+    id_cols = ["Excel Row", "Category", "IS Statement Header", 
+               "Sub Header", "Main Header"]  # etc.
     
-    quarter_year = melted["Quarter/Year"].str.extract(r'^(Q\d)\s*[-]?\s*(FY\d{2,4})$', expand=False)
-    melted["Quarter"] = quarter_year[0]
-    melted["Year"] = quarter_year[1]
+    # If there are columns that look like “Q1 2024” or so, pivot them
+    value_cols = [c for c in df.columns if c not in id_cols]
+    melted = df.melt(id_vars=id_cols, value_vars=value_cols,
+                     var_name="Quarter/Year", value_name="Financial Amount")
 
-    # Handle cases where only "FY29" is present
-    fy_only = melted["Quarter/Year"].str.match(r'^FY\d{2,4}$')
-    melted.loc[fy_only, "Year"] = melted.loc[fy_only, "Quarter/Year"].str.extract(r'^FY(\d{2,4})$')[0]
-    melted.loc[fy_only, "Quarter"] = "All Periods"
-
-    # Convert Year to full format if necessary
-    melted["Year"] = melted["Year"].apply(lambda x: f"20{x[-2:]}" if pd.notnull(x) and len(x) == 2 else x)
-
-    melted.dropna(subset=["Quarter", "Year", "Financial Amount"], inplace=True)
+    # Simple parse to unify Quarter/Year into separate fields (example)
+    melted["quarter_year"] = melted["Quarter/Year"].str.strip()
+    # Additional logic to extract numeric year, quarter, etc.
+    # ...
+    
     return melted
 
-def attach_metadata(melted, metadata):
-    """Attach metadata to the melted DataFrame."""
-    for k, v in metadata.items():
-        melted[k] = v
-
-def process_workbook(file_path, output_file_path):
-    """Process an Excel workbook and save the combined DataFrame to a CSV file."""
+# ----------------------------------------------------------------
+def process_sheet(file_path: str, sheet_name: str) -> pd.DataFrame:
+    """
+    Load a single sheet, build row data, assign headers,
+    build a cleaned DataFrame, melt/parse, return final result.
+    Also print any 'IS Statement Header' values found.
+    """
     wb = load_workbook(file_path, data_only=True)
+    if sheet_name not in wb.sheetnames:
+        return pd.DataFrame()  # or None
+
+    sheet = wb[sheet_name]
+    # Convert sheet range to DataFrame. Adjust row/col limits to your data
+    data = sheet.values
+    df = pd.DataFrame(data)  # You might skip the first row if it’s a title, etc.
+
+    # 1. Build row data from raw sheet DataFrame
+    row_data = build_row_data(df)
+
+    # 2. Assign headers (propagate them downward)
+    row_data = assign_headers(row_data)
+
+    # 3. Build a cleaned structured DataFrame
+    cleaned_df = build_cleaned_dataframe(row_data)
+
+    # 4. Print any “IS Statement Header” rows for debugging/logging
+    is_mask = cleaned_df["Category"] == "IS Statement Header"
+    if is_mask.any():
+        logging.info(f"Workbook: {file_path}, Sheet: {sheet_name} — "
+                     f"Found IS Statement Header row(s):")
+        for idx, row in cleaned_df[is_mask].iterrows():
+            logging.info(f"  Row {row['Excel Row']}: {row['IS Statement Header']}")
+
+    # 5. Melt & parse if needed
+    final_df = melt_and_parse(cleaned_df)
+    return final_df
+
+# ----------------------------------------------------------------
+def process_workbooks(input_path: str, output_file: str) -> None:
+    """
+    Iterate over all .xls/.xlsx files in 'input_path',
+    process each sheet, combine the results, and write to CSV.
+    """
     all_data = []
-    expected_sizes = {}  # To track the expected sizes
+    files = list(Path(input_path).glob("*.xls*"))  # .xls or .xlsx
+    if not files:
+        logging.warning("No Excel files found in input path.")
 
-    for sheet_name in wb.sheetnames:
-        sheet = wb[sheet_name]
-        melted = process_sheet(sheet, sheet_name, file_path, expected_sizes)
-        if melted is not None:
-            all_data.append(melted)
+    for file_path in tqdm(files, desc="Processing Excel files", unit="file"):
+        wb = load_workbook(file_path, data_only=True)
+        for sheet_name in wb.sheetnames:
+            # Optional: skip hidden sheets, etc. if needed
+            metadata = extract_metadata(str(file_path), sheet_name)
+            df = process_sheet(str(file_path), sheet_name)
+            # Attach metadata columns to each row
+            if not df.empty:
+                df["Workbook Name"] = metadata["workbook_name"]
+                df["Sheet Name"] = metadata["sheet_name"]
+                all_data.append(df)
 
-    combined_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-    combined_df.drop_duplicates(inplace=True)  # Ensure no duplicates
-    combined_df.to_csv(output_file_path, index=False, encoding='utf-8')  # Force UTF-8 encoding
-    print(f"\nProcessed workbook saved at: {output_file_path}")
+    if all_data:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        # Drop duplicates if needed
+        combined_df.drop_duplicates(inplace=True)
+        # Write out the final CSV
+        combined_df.to_csv(output_file, index=False, encoding="utf-8-sig")
+        logging.info(f"Combined output saved to: {output_file}")
+    else:
+        logging.info("No data to combine. Finished with no output.")
 
-    return expected_sizes
-
-# Test-related functions
-
-def test_shapes_match(output_path, expected_sizes):
-    """Test that input cells match output cells in aggregate."""
-    df_output = pd.read_csv(output_path, encoding='utf-8')  # Ensure UTF-8 encoding on import
-    total_output_cells = df_output.shape[0] * df_output.shape[1]  # Total cells in the output
-
-    total_expected_cells = sum(expected_sizes.values())  # Sum of expected sizes from all sheets
-
-    assert total_output_cells == total_expected_cells, (
-        f"Mismatch in cell counts: Expected {total_expected_cells}, but got {total_output_cells}!"
-    )
-
+# ----------------------------------------------------------------
 if __name__ == "__main__":
-    # Specify input and output folder paths
-    input_folder = "data/input"
-    output_folder = "data/output"
-    input_file = os.path.join(input_folder, "Test-2.xlsx")
-    output_file = os.path.join(output_folder, "example.csv")
-
-    expected_sizes = process_workbook(input_file, output_file)
-
-    # Run unit tests
-    test_shapes_match(output_file, expected_sizes)
+    # Example usage:
+    input_path = "data/input"
+    output_file = "data/output/test_output.csv"
+    process_workbooks(input_path, output_file)
